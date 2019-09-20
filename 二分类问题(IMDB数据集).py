@@ -10,6 +10,11 @@ import tensorflow as tf
 from tensorflow import keras#将tensorflow作为keras的后端
 import numpy as np
 import matplotlib.pylab as plt
+
+
+#该项目主要是将来自imdb的评论数据分成好坏两类，并使用验证集合测试机来检验准确率
+#imdb数据集的数据是单词的索引组成的列表（数字），标签是0和1组成的列表，表示负面和正面
+
 #1、获取和准备数据
 
 #one-hot编码,将整数序列编码为二进制矩阵，方便识别分类
@@ -37,7 +42,7 @@ model.add(keras.layers.Dense(16,activation='relu',input_shape=(10000,)))#该层�
 model.add(keras.layers.Dense(16,activation='relu'))#不需要指定该层的输入形状，该框架会自动识别匹配层之间的连接
 model.add(keras.layers.Dense(1,activation='sigmoid'))#relu函数将所有负值归0，sigmoid函数将任意值压缩到[0,1]之间，所以输出可以看作概率值
 #编译模型，指定优化器，损失函数和衡量指标
-model.compile(optimizer=keras.optimizers.RMSprop,loss=keras.losses.binary_crossentropy(),metrics=[keras.metrics.binary_accuracy()])
+model.compile(optimizer=keras.optimizers.RMSprop(lr=0.01),loss=keras.losses.binary_crossentropy,metrics=[keras.metrics.binary_accuracy])
 
 #3、验证模型
 #留出验证集
@@ -59,6 +64,8 @@ epoch=range(1,len(loss)+1)
 #画图
 plt.plot(epoch,loss,'bo',label='training loss')
 plt.plot(epoch,val_loss,'b',label='validation loss')
+plt.rcParams['font.sans-serif']=['SimHei']#用于解决中文显示问题
+plt.rcParams['axes.unicode_minus'] = False
 plt.title('训练和验证过程的损失值变化')
 plt.xlabel('epoch')
 plt.ylabel('loss')
