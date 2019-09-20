@@ -51,8 +51,8 @@ x_val = x_train[:10000]
 x_train = x_train[10000:]
 y_val = y_train[:10000]
 y_train = y_train[10000:]
-# 训练模型,一个批次512个样本，训练集一共使用20个轮次
-history = model.fit(x_train, y_train, epochs=10, batch_size=512, validation_data=(x_val, y_val))
+# 训练模型,一个批次512个样本，训练集一共使用5个轮次，因为绘制出训练和验证的损失曲线后，会发现eopchs过大会过拟合
+history = model.fit(x_train, y_train, epochs=5, batch_size=512, validation_data=(x_val, y_val))
 # 绘制训练损失和验证集的损失
 
 # history.history.keys()#查看训练过程中的返回数据
