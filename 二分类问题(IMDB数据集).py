@@ -16,7 +16,7 @@ import matplotlib.pylab as plt
 
 # 1、获取和准备数据
 
-# one-hot编码,将整数序列编码为二进制矩阵，方便识别分类
+# 将整数序列编码为二进制矩阵，方便识别分类
 def vectories_sequences(sequences, dim=10000):
     results = np.zeros((len(sequences), dim))  # 构造形状为(len(sequences),dim)的矩阵
     for i, sequence in enumerate(sequences):
