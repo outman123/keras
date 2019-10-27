@@ -419,7 +419,6 @@ bay = BayesianRidge()
 
 
 
-
 #2、使用Stacking进行模型融合
 class stacking(BaseEstimator, RegressorMixin, TransformerMixin):
     def __init__(self, mod, meta_model):
