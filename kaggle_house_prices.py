@@ -30,7 +30,7 @@ from sklearn.svm import SVR, LinearSVR
 from sklearn.linear_model import ElasticNet, SGDRegressor, BayesianRidge
 from sklearn.kernel_ridge import KernelRidge
 from xgboost import XGBRegressor
-
+from mlxtend.regressor import StackingRegressor
 #1.获取数据并查看
 train_data=pd.read_csv('D:/用户目录/我的文档/keras实践/house_prices/train.csv')#返回的是dataframe类型
 test_data=pd.read_csv('D:/用户目录/我的文档/keras实践/house_prices/test.csv')
@@ -38,8 +38,7 @@ print(train_data.shape,test_data.shape)
 # data=train_data.iloc[0:4,[0,1,2,3,-1]]
 print(train_data.head())#输出前5行数据
 print(test_data.head())
-#2、去除异常数据
-
+#2、去除异常数据和偏值分析
 # 使用下列两种方式都可以查看与SalePrice最相关的10个属性
 # #作图来显示相关性
 # corrmat=train_data.corr()
@@ -65,7 +64,11 @@ train_data.drop(train_data[(train_data['GrLivArea']>4000) & (train_data['SalePri
 # train_data.drop(train_data[(train_data['TotalBsmtSF']>6000) & (train_data['SalePrice']<200000)].index,inplace=True)
 train_data.reset_index(drop=True, inplace=True)
 print(train_data.shape)
+#除了Ridge和ElasticNet训练了训练集，并对训练集进行预测，找出两个算法中预测效果都不理想的样本作为离群值
 
+
+#从大到小排序前20个属性的偏值，查看属性是否符合正态分布，符合的后面特征工程处理
+#np.abs(train_data.skew()).sort_values(ascending=False).head(20)
 
 #3、缺省值处理
 '''
@@ -96,12 +99,11 @@ cols1 = ["PoolQC" , "MiscFeature", "Alley", "Fence", "FireplaceQu", "GarageQual"
          "GarageType", "BsmtExposure", "BsmtCond", "BsmtQual", "BsmtFinType2", "BsmtFinType1", "MasVnrType"]
 for col in cols1:
     all_features[col].fillna("None", inplace=True)
-##缺失代表的是这个房子本身没有这种特征，用 “None” 来填补。（数字类型）
+##缺失代表的是这个房子本身没有这种特征，用 0 来填补。（数字类型）
 cols=["MasVnrArea", "BsmtUnfSF", "TotalBsmtSF", "GarageCars", "BsmtFinSF2", "BsmtFinSF1", "GarageArea"]
 for col in cols:
     all_features[col].fillna(0, inplace=True)
 #众数填充
-# fill in with mode
 cols2 = ["MSZoning", "BsmtFullBath", "BsmtHalfBath", "Utilities", "Functional", "Electrical", "KitchenQual", "SaleType","Exterior1st", "Exterior2nd"]
 for col in cols2:
     all_features[col].fillna(all_features[col].mode()[0], inplace=True)
@@ -114,8 +116,10 @@ all_features['LotFrontage']=all_features.groupby(['LotAreaCut','Neighborhood'])[
 all_features['LotFrontage']=all_features.groupby(['LotAreaCut'])['LotFrontage'].transform(lambda x: x.fillna(x.median()))
 print(all_features.isnull().sum().sort_values(ascending=False))
 
+
+
 #4、特征工程
-#Convert some numerical features into categorical features. It's better to use LabelEncoder and get_dummies for these features.
+# 以上特征是字符特征，转化成数值型特征，所以这样后属性统一，更易于特征训练。
 NumStr = ["MSSubClass","BsmtFullBath","BsmtHalfBath","HalfBath","BedroomAbvGr","KitchenAbvGr","MoSold","YrSold","YearBuilt","YearRemodAdd","LowQualFinSF","GarageYrBlt"]
 for col in NumStr:
     all_features[col]=all_features[col].astype(str)
@@ -123,9 +127,8 @@ for col in NumStr:
 #build as many features as possible and trust the model to choose the right features
 #groupby SalePrice according to one feature and sort it based on mean and median.
 
-all_features.groupby(['MSSubClass'])[['SalePrice']].agg(['mean','median','count'])
-#像这样按照SalePrice的均值和中位值对22个特征的取值进行分类，再构建成map
-#map these values
+
+#映射这些值
 def map_values():
     all_features["oMSSubClass"] = all_features.MSSubClass.map({'180': 1,
                                                '30': 2, '45': 2,
@@ -215,7 +218,7 @@ all_features.drop(['SalePrice'],axis=1,inplace=True)
 
 # It's convenient to experiment different feature combinations once you've got a pipeline.
 
-#Label Encoding three "Year" features.
+#编码三个有关Year的特征
 class labelenc(BaseEstimator, TransformerMixin):
     def __init__(self):
         pass
@@ -231,7 +234,7 @@ class labelenc(BaseEstimator, TransformerMixin):
         return X
 
 
-#Apply log1p to the skewed features, then get_dummies.
+#使用log1p来正态化偏值较大的特征，并且向量化
 class skew_dummies(BaseEstimator, TransformerMixin):
     def __init__(self, skew=0.5):
         self.skew = skew
@@ -247,44 +250,19 @@ class skew_dummies(BaseEstimator, TransformerMixin):
         X = pd.get_dummies(X)
         return X
 
-# build pipeline
-pipe = Pipeline([
-    ('labenc', labelenc()),
-    ('skew_dummies', skew_dummies(skew=1)),
-    ])
 
-# save the original data for later use
-all_features2 = all_features.copy()
-data_pipe = pipe.fit_transform(all_features2)
-print(data_pipe.shape)
-print(data_pipe.head())
-
-#use robustscaler since maybe there are other outliers.
-scaler = RobustScaler()
-n_train=train_data.shape[0]
-
-X = data_pipe[:n_train]
-test_X = data_pipe[n_train:]
-y= train_data.SalePrice
-
-X_scaled = scaler.fit(X).transform(X)
-y_log = np.log(train_data.SalePrice)
-test_X_scaled = scaler.transform(test_X)
-# print(X_scaled.shape)
-# print(X_scaled.head)
 #将原始特征进行组合通常能产生意想不到的效果，然而这个数据集中原始特征有很多，不可能所有都一一组合，
 # 所以这里先用Lasso进行特征筛选，选出较重要的一些特征进行组合。
-lasso=Lasso(alpha=0.001)
-lasso.fit(X_scaled,y_log)
-FI_lasso = pd.DataFrame({"Feature Importance":lasso.coef_}, index=data_pipe.columns)
-FI_lasso.sort_values("Feature Importance",ascending=False)
-
+# lasso=Lasso(alpha=0.001)
+# lasso.fit(X_scaled,y_log)
+# FI_lasso = pd.DataFrame({"Feature Importance":lasso.coef_}, index=data_pipe.columns)
+# FI_lasso.sort_values("Feature Importance",ascending=False)
 # FI_lasso[FI_lasso["Feature Importance"]!=0].sort_values("Feature Importance").plot(kind="barh",figsize=(15,25))
 # plt.xticks(rotation=90)
 # plt.show()
 
 
-#add some features to the pipeline.
+#增加新特征
 class add_feature(BaseEstimator, TransformerMixin):
     def __init__(self, additional=1):
         self.additional = additional
@@ -326,19 +304,51 @@ class add_feature(BaseEstimator, TransformerMixin):
 
             return X
 
-# By using a pipeline, you can quickily experiment different feature combinations.
+# 通过pipeline,可以更加快速的实验不同的特征组合
 pipe = Pipeline([  ('labenc', labelenc()),
                    ('add_feature', add_feature(additional=2)),
                    ('skew_dummies', skew_dummies(skew=1)),])
-#
-#
-# print(X.shape,test_X.shape)
-# print(X.head)
-# #将处理后的结果进行保存，用于接下来构建模型
-# train_now=pd.concat([X,y],axis=1)
-# test_now=test_X
+
+#组合不同特征后保存处理好的数据
+all_features2 = all_features.copy()
+data_pipe = pipe.fit_transform(all_features2)
+print(type(data_pipe),data_pipe.shape)
+n_train=train_data.shape[0]
+X = data_pipe[:n_train]
+test_X = data_pipe[n_train:]
+y= train_data.SalePrice
+train_now=pd.concat([X,y],axis=1)
+test_now=test_X
+print('特征化后训练集形状：',train_now.shape,'特征化后测试集形状：',test_X.shape,'训练集的标签形状：',y.shape)
+print('特征化后训练集前5行：')
+print(train_now.head())
+# 存储处理好的数据
 # train_now.to_csv('house_prices/train_afterchange.csv')
-# test_now.to_csv('house_prices/test_afterchange.csv')
+# test_X.to_csv('house_prices/test_afterchange.csv')
+# 读取处理好的数据
+# train_X=pd.read_csv('house_prices/train_afterchange.csv')
+# X=train_X[:-1]
+# y=train_X.SalePrice
+# test_X=pd.read_csv('house_prices/test_afterchange.csv')
+
+
+
+#数据标准/归一化
+scaler = RobustScaler()
+X_scaled = scaler.fit(X).transform(X)
+y_log = np.log(y)
+test_X_scaled = scaler.transform(test_X)
+print(type(X_scaled),X_scaled.shape)
+print(type(test_X_scaled),test_X_scaled.shape)
+print(y_log.shape)
+
+#自己添加的特征都是高度相关的，所以使用PCA降低这些相关性
+pca = PCA(n_components=426)
+X_scaled=pca.fit_transform(X_scaled)
+test_X_scaled = pca.transform(test_X_scaled)
+
+print(X_scaled.shape, test_X_scaled.shape)
+print(X)
 
 
 
@@ -347,15 +357,9 @@ pipe = Pipeline([  ('labenc', labelenc()),
 
 
 
-#the features I built are highly correlated, and it leads to multicollinearity. PCA can decorrelate these features.
-pca = PCA(n_components=405)
-X_scaled=pca.fit_transform(X_scaled)
-test_X_scaled = pca.transform(test_X_scaled)
-
-print(X_scaled.shape, test_X_scaled.shape)
 
 #首先定义RMSE的交叉验证评估指标：
-# define cross validation strategy
+# 定义一个评估标准来衡量模型的优劣
 def rmse_cv(model,X,y):
     rmse = np.sqrt(-cross_val_score(model, X, y, scoring="neg_mean_squared_error", cv=5))
     return rmse
@@ -386,40 +390,16 @@ def grid_get(model, X, y, param_grid):
 # grid_get(KernelRidge(),X_scaled,y_log,param_grid)
 # grid_get(ElasticNet(),X_scaled,y_log,{'alpha':[0.0005,0.0008,0.004,0.005],'l1_ratio':[0.08,0.1,0.3,0.5,0.7],'max_iter':[10000]})
 
-#根据结果实例化最佳模型参数
-lasso = Lasso(alpha=0.0004,max_iter=10000)
-ridge = Ridge(alpha=35)
-svr = SVR(gamma= 0.0004,kernel='rbf',C=14,epsilon=0.009)
-ker = KernelRidge(alpha=0.2 ,kernel='polynomial',degree=3 , coef0=1)
-ela = ElasticNet(alpha=0.004,l1_ratio=0.08,max_iter=10000)
+# #根据结果实例化最佳模型参数
+lasso = Lasso(alpha=0.0005,max_iter=10000)
+ridge = Ridge(alpha=60)
+svr = SVR(gamma= 0.0004,kernel='rbf',C=13,epsilon=0.009)
+ker = KernelRidge(alpha=0.2 ,kernel='polynomial',degree=3 , coef0=0.8)
+ela = ElasticNet(alpha=0.005,l1_ratio=0.08,max_iter=10000)
 bay = BayesianRidge()
 
 
-# #1、Weight Average加权平均进行模型融合
-# #Average base models according to their weights.
-# class AverageWeight(BaseEstimator, RegressorMixin):
-#     def __init__(self, mod, weight):
-#         self.mod = mod
-#         self.weight = weight
-#
-#     def fit(self, X, y):
-#         self.models_ = [clone(x) for x in self.mod]
-#         for model in self.models_:
-#             model.fit(X, y)
-#         return self
-#
-#     def predict(self, X):
-#         w = list()
-#         pred = np.array([model.predict(X) for model in self.models_])
-#         # for every data point, single model prediction times weight, then add them together
-#         for data in range(pred.shape[1]):
-#             single = [pred[model, data] * weight for model, weight in zip(range(pred.shape[0]), self.weight)]
-#             w.append(np.sum(single))
-#         return w
-
-
-
-#2、使用Stacking进行模型融合
+#使用Stacking进行模型融合
 class stacking(BaseEstimator, RegressorMixin, TransformerMixin):
     def __init__(self, mod, meta_model):
         self.mod = mod
@@ -457,29 +437,32 @@ class stacking(BaseEstimator, RegressorMixin, TransformerMixin):
                 test_single[:, j] = clone_model.predict(test_X)
             test_mean[:, i] = test_single.mean(axis=1)
         return oof, test_mean
+# 直接使用mlxtend的StackingRegressor，但效果反而没有自定义的好
+# stack_model =StackingRegressor(regressors=[lasso,ridge,svr,ker,ela,bay], meta_regressor=ker)
+# print(rmse_cv(stack_model,X_scaled,y_log))
+# print(rmse_cv(stack_model,X_scaled,y_log).mean())
 
-# must do imputer first, otherwise stacking won't work, and i don't know why.
+
 a = Imputer().fit_transform(X_scaled)
 b = Imputer().fit_transform(y_log.values.reshape(-1,1)).ravel()
 stack_model = stacking(mod=[lasso,ridge,svr,ker,ela,bay],meta_model=ker)
-print(rmse_cv(stack_model,a,b))
-print(rmse_cv(stack_model,a,b).mean())
+print('训练集误差',rmse_cv(stack_model,a,b))#训练集误差[0.10330339 0.10976285 0.11720582 0.09831198 0.10430719]
+print('训练集误差均值',rmse_cv(stack_model,a,b).mean())#训练集上所有模型的平均误差 0.10657824413611261
 
-#第二层：Next we extract the features generated from stacking, then combine them with original features.
+#第二层：提取从stacking产生的特征，然后和原始特征合成在一起
 X_train_stack, X_test_stack = stack_model.get_oof(a,b,test_X_scaled)
-print(X_train_stack.shape, a.shape)
-X_train_add = np.hstack((a,X_train_stack))
+# print(X_train_stack.shape, a.shape)# (1458, 6) (1458, 426)
+X_train_add = np.hstack((a,X_train_stack))#数组拼接-在水平方向上平铺
 X_test_add = np.hstack((test_X_scaled,X_test_stack))
-print(X_train_add.shape, X_test_add.shape)
-print(rmse_cv(stack_model,X_train_add,b))
-print(rmse_cv(stack_model,X_train_add,b).mean())
+# print(X_train_add.shape, X_test_add.shape)#(1458, 432) (1459, 432)
+print('原数据集和特征组成的新数据集误差',rmse_cv(stack_model,X_train_add,b))# [0.09847682 0.10494807 0.11206736 0.09385517 0.09895766]
+print('新数据集原数据集和特征组成的新数据集误差均值',rmse_cv(stack_model,X_train_add,b).mean()) #0.10166101589603005
 
 
-
-# #submit
-# # This is the final model I use
-# stack_model = stacking(mod=[lasso,ridge,svr,ker,ela,bay],meta_model=ker)
-# stack_model.fit(a,b)
-# pred = np.exp(stack_model.predict(test_X_scaled))
-# result=pd.DataFrame({'Id':test_data.Id, 'SalePrice':pred})
-# result.to_csv("submission.csv",index=False)
+# # #submit
+# # # This is the final model I use
+# # stack_model = stacking(mod=[lasso,ridge,svr,ker,ela,bay],meta_model=ker)
+# # stack_model.fit(a,b)
+# # pred = np.exp(stack_model.predict(test_X_scaled))
+# # result=pd.DataFrame({'Id':test_data.Id, 'SalePrice':pred})
+# # result.to_csv("submission.csv",index=False)
